@@ -1,22 +1,19 @@
 package gestorftp;
 
-import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.PrintStream;
 import org.apache.commons.net.ftp.FTP;
 import org.apache.commons.net.ftp.FTPClient;
 import org.apache.commons.net.ftp.FTPReply;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.nio.file.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class GestorFTP {
 
-    //172.26.157.64
-    private FTPClient clienteFTP;
+    private static final String DIRECTORIO_LOCAL = "C:/localDir/";
+
+    private final FTPClient clienteFTP;
     private static final String SERVIDOR = "172.26.157.64";
     private static final int PUERTO = 21;
     private static final String USUARIO = "guillermo";
@@ -26,22 +23,18 @@ public class GestorFTP {
         clienteFTP = new FTPClient();
     }
 
-    private void conectar() {
-        try {
-            clienteFTP.connect(SERVIDOR, PUERTO);
-            int respuesta = clienteFTP.getReplyCode();
-            if (!FTPReply.isPositiveCompletion(respuesta)) {
-                clienteFTP.disconnect();
-                throw new IOException("Error al conectar con el servidor FTP");
-            }
-            boolean credencialesOK = clienteFTP.login(USUARIO, PASSWORD);
-            if (!credencialesOK) {
-                throw new IOException("Error al conectar con el servidor FTP. Credenciales incorrectas");
-            }
-            clienteFTP.setFileType(FTP.BINARY_FILE_TYPE);
-        } catch (IOException ex) {
-            System.out.println("No se ha conectar al servidor. Excepción: " + ex.getMessage());
+    private void conectar() throws IOException {
+        clienteFTP.connect(SERVIDOR, PUERTO);
+        int respuesta = clienteFTP.getReplyCode();
+        if (!FTPReply.isPositiveCompletion(respuesta)) {
+            clienteFTP.disconnect();
+            throw new IOException("Error al conectar con el servidor FTP");
         }
+        boolean credencialesOK = clienteFTP.login(USUARIO, PASSWORD);
+        if (!credencialesOK) {
+            throw new IOException("Error al conectar con el servidor FTP. Credenciales incorrectas");
+        }
+        clienteFTP.setFileType(FTP.BINARY_FILE_TYPE);
     }
 
     private void desconectar() {
@@ -52,78 +45,71 @@ public class GestorFTP {
         }
     }
 
-    private boolean subirFichero(String path) {
+    private boolean subirFichero(Path path) {
         boolean exito = false;
         try {
-            File ficheroLocal = new File(path);
-            InputStream is = new FileInputStream(ficheroLocal);
-            boolean enviado = clienteFTP.storeFile(ficheroLocal.getName(), is);
+            FileInputStream is = new FileInputStream(path.toFile());
+            boolean enviado = clienteFTP.storeFile(path.getFileName().toString(), is);
             is.close();
-            System.out.println("Enviado: " + enviado);
+            System.out.println("Archivo subido: " + path.getFileName() + " - " + enviado);
             exito = enviado;
-        } catch (FileNotFoundException ex) {
-            System.out.println("Error al buscar el archivo. Excepción: " + ex.getMessage());
         } catch (IOException ex) {
-            System.out.println("Error al subir el archivo. Excepción: " + ex.getMessage());
+            System.out.println("Error al subir archivo. Excepción: " + ex.getMessage());
         }
         return exito;
     }
 
-    private boolean descargarFichero(String ficheroRemoto, String pathLocal) {
-    boolean exito = false;
-    try {
-        File localDir = new File(pathLocal);
-        if (!localDir.exists()) {
-            boolean dirCreated = localDir.mkdirs();
-            if (!dirCreated) {
-                System.out.println("No se pudo crear el directorio local: " + pathLocal);
-                return false;
-            }
+    private boolean eliminarFichero(String nombreArchivo) {
+        boolean exito = false;
+        try {
+            boolean eliminado = clienteFTP.deleteFile(nombreArchivo);
+            System.out.println("Archivo eliminado: " + nombreArchivo + " - " + eliminado);
+            return eliminado;
+        } catch (IOException ex) {
+            System.out.println("Error al eliminar archivo. Excepción: " + ex.getMessage());
         }
-        File localFile = new File(localDir, ficheroRemoto);
-        OutputStream os = new BufferedOutputStream(new FileOutputStream(localFile));
-        boolean recibido = clienteFTP.retrieveFile(ficheroRemoto, os);
-        System.out.println("Respuesta del servidor: " + clienteFTP.getReplyString());
-        System.out.println("Descargado: " + recibido);
-        
-        os.close();
-        exito = recibido;
-    } catch (FileNotFoundException ex) {
-        System.out.println("Error, archivo no encontrado. Excepción: " + ex.getMessage());
-    } catch (IOException ex) {
-        System.out.println("Error durante la descarga. Excepción: " + ex.getMessage());
+        return exito;
     }
-    return exito;
-}
+
+    private void monitoreoCarpetaLocal() {
+        try {
+            Path path = Paths.get(DIRECTORIO_LOCAL);
+            WatchService ws = FileSystems.getDefault().newWatchService();
+            path.register(ws,
+                    StandardWatchEventKinds.ENTRY_CREATE,
+                    StandardWatchEventKinds.ENTRY_DELETE
+            );
+
+            while (true) {
+                WatchKey key = ws.take();
+                for (WatchEvent<?> event : key.pollEvents()) {
+                    WatchEvent.Kind<?> kind = event.kind();
+                    Path archivoCambiado = (Path) event.context();
+                    Path rutaCompleta = path.resolve(archivoCambiado);
+                    if (kind == StandardWatchEventKinds.ENTRY_CREATE) {
+                        Thread.sleep(500);
+                        conectar();
+                        subirFichero(rutaCompleta);
+                        desconectar();
+                    } else if (kind == StandardWatchEventKinds.ENTRY_DELETE) {
+                        conectar();
+                        eliminarFichero(archivoCambiado.toString());
+                        desconectar();
+                    }
+                }
+                key.reset();
+            }
+        } catch (IOException ex) {
+            System.err.println("Error al encontrar el directorio. Excepción: " + ex.getMessage());
+        } catch (InterruptedException ex) {
+            System.err.println("Error relacionado con hilos y procesos (Interrumpidos). Excepción: " + ex.getMessage());
+        }
+
+    }
 
     public static void main(String[] args) {
-        try {
-            System.setOut(new PrintStream(System.out, true, "UTF-8"));
-            String fichero_descarga = "test.txt";
-
             GestorFTP gestorFTP = new GestorFTP();
-            gestorFTP.conectar();
-            System.out.println("Conectado");
-            /*
-            boolean subido = gestorFTP.subirFichero("C:/Users/guillermo/Desktop/test.txt");
-            if (subido) {
-                System.out.println("Fichero subido correctamente");
-            } else {
-                System.err.println("Ha ocurrido un error al intentar subir el fichero");
-            }
-
-             */
-            boolean descargado = gestorFTP.descargarFichero(fichero_descarga, "C:/ftpPrueba2");
-            if (descargado) {
-                System.out.println("Fichero descargado correctamente");
-            } else {
-                System.err.println("Ha ocurrido un error al intentar descargar el fichero.");
-            }
-
-            gestorFTP.desconectar();
-            System.out.println("Desconectado");
-        } catch (Exception e) {
-            System.err.println("Ha ocurrido un error:" + e.getMessage());
-        }
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            executor.submit(() -> gestorFTP.monitoreoCarpetaLocal());
     }
 }
