@@ -1,11 +1,16 @@
 package gestorftp;
 
+import java.io.BufferedReader;
+import java.io.File;
 import org.apache.commons.net.ftp.FTP;
 import org.apache.commons.net.ftp.FTPClient;
 import org.apache.commons.net.ftp.FTPReply;
 import java.io.FileInputStream;
+import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.*;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -77,7 +82,8 @@ public class GestorFTP {
             WatchService ws = FileSystems.getDefault().newWatchService();
             path.register(ws,
                     StandardWatchEventKinds.ENTRY_CREATE,
-                    StandardWatchEventKinds.ENTRY_DELETE
+                    StandardWatchEventKinds.ENTRY_DELETE,
+                    StandardWatchEventKinds.ENTRY_MODIFY
             );
 
             while (true) {
@@ -95,6 +101,22 @@ public class GestorFTP {
                         conectar();
                         eliminarFichero(archivoCambiado.toString());
                         desconectar();
+                    } else if (kind == StandardWatchEventKinds.ENTRY_MODIFY) {
+                        FileReader fr = new FileReader("C:/localDir/" + archivoCambiado.toString());
+                        BufferedReader br = new BufferedReader(fr);
+                        String mensaje;
+                        List<String> contenido = new ArrayList<>();
+                        while ((mensaje = br.readLine()) != null) {
+                            contenido.add(mensaje);
+                        }
+                        br.close();
+                        fr.close();
+                        Thread.sleep(5);
+                        conectar();
+                        eliminarFichero(archivoCambiado.toString());
+                        File nuevoArchivo = new File("C:/localDir/" + archivoCambiado.toString());
+                        subirFichero(nuevoArchivo.toPath());
+                        desconectar();
                     }
                 }
                 key.reset();
@@ -108,8 +130,8 @@ public class GestorFTP {
     }
 
     public static void main(String[] args) {
-            GestorFTP gestorFTP = new GestorFTP();
-            ExecutorService executor = Executors.newSingleThreadExecutor();
-            executor.submit(() -> gestorFTP.monitoreoCarpetaLocal());
+        GestorFTP gestorFTP = new GestorFTP();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        executor.submit(() -> gestorFTP.monitoreoCarpetaLocal());
     }
 }
