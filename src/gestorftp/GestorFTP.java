@@ -110,7 +110,7 @@ public class GestorFTP {
                 exito = enviado;
             }
         } catch (Exception ex) {
-            System.out.println("Error al subir archivo. Excepción: " + ex.getMessage());
+            System.err.println("Error al subir archivo. Excepción: " + ex.getMessage());
         }
         return exito;
     }
@@ -128,7 +128,7 @@ public class GestorFTP {
                 return eliminado;
             }
         } catch (IOException ex) {
-            System.out.println("Error al eliminar archivo. Excepción: " + ex.getMessage());
+            System.err.println("Error al eliminar archivo. Excepción: " + ex.getMessage());
         }
         return exito;
     }
